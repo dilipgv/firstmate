@@ -82,6 +82,8 @@ config/backend  runtime session-provider backend override for new tasks; LOCAL, 
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/x-mode.env    generated X-mode watcher cadence; LOCAL, gitignored; source before arming watcher when present
+config/trello.env    optional Trello control-plane credentials (TRELLO_API_KEY, TRELLO_TOKEN, TRELLO_BOARD_SHORTLINK); LOCAL, gitignored; presence-gates section 15
+config/trello-mode.env  generated Trello control-plane watcher cadence (FM_CHECK_INTERVAL=30); LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         captain's personal preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
@@ -95,13 +97,17 @@ state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
   <id>.grok-turnend-token   firstmate-owned grok hook registry token for the task; removed by teardown
-  <id>.meta          written by fm-spawn: window=, worktree=, project=, harness=, model=, effort=, kind=, mode=, yolo=, tasktmp=; kind=secondmate also records home= and projects=; a non-default runtime backend records further backend-specific fields (docs/configuration.md "Runtime backend"; bin/fm-backend.sh, section 8); fm-pr-check, including through fm-pr-merge, appends pr= and GitHub's pr_head= when available; fm-x-link appends x_request=, x_request_ts=, x_followups=, and optional x_platform=/x_reply_max_chars= for an X-mode-originated task (section 14)
+  <id>.meta          written by fm-spawn: window=, worktree=, project=, harness=, model=, effort=, kind=, mode=, yolo=, tasktmp=; kind=secondmate also records home= and projects=; a non-default runtime backend records further backend-specific fields (docs/configuration.md "Runtime backend"; bin/fm-backend.sh, section 8); fm-pr-check, including through fm-pr-merge, appends pr= and GitHub's pr_head= when available; fm-x-link appends x_request=, x_request_ts=, x_followups=, and optional x_platform=/x_reply_max_chars= for an X-mode-originated task (section 14); fm-trello.sh bind appends trello_card= binding the task to its board card (section 15)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   x-watch.check.sh   generated X-mode relay poll shim; present only when opted in (section 14)
   x-inbox/           generated X-mode pending mention payloads; fmx-respond drains it (section 14)
   x-context/         generated X-mode durable per-request reply context (platform/budget), keyed by request_id; survives inbox cleanup so a delayed follow-up recovers the original platform (section 14; bin/fm-x-lib.sh)
   x-outbox/          generated X-mode dry-run reply and dismiss previews; inspect it when FMX_DRY_RUN is set (section 14)
   x-poll.error       generated X-mode relay diagnostic dedupe marker
+  trello-watch.check.sh  generated Trello control-plane board poll shim; present only when opted in (section 15)
+  .trello-paused     durable Trello hibernate flag; present = board poll stands down until fm-trello.sh start (section 15)
+  .trello-seen-<cardid>  per-card seen marker (dateLastActivity<TAB>listid) for Trello poll idempotency; never touch
+  trello-poll.error  generated Trello control-plane diagnostic dedupe marker
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
@@ -759,12 +765,13 @@ It performs only fast-forward self-updates of firstmate and registered secondmat
 
 These skills are not captain-invocable; they are conditional operating references you must load at the trigger points below.
 
-- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints any diagnostic or capability line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`, `NUDGE_SECONDMATES:`, or `FMX:`); silence needs no load.
+- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints any diagnostic or capability line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`, `NUDGE_SECONDMATES:`, `FMX:`, or `TRELLO:`); silence needs no load.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
 - `firstmate-orca` - load before switching to Orca, spawning or supervising Orca-backed work, smoke-testing Orca backend behavior, debugging Orca task state, or reconciling Orca-backed task metadata.
 - `stuck-crewmate-recovery` - load after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
 - `secondmate-provisioning` - load before creating, seeding, validating, launching, handing backlog to, recovering, pushing inherited config into, or retiring a secondmate home, and before editing `data/secondmates.md`.
 - `fmx-respond` - load on an `x-mention <request_id>` `check:` wake to handle the mention, on an `x-mode-error ...` `check:` wake to report the X-mode configuration blocker, and on any milestone or terminal wake for an X-mode-linked task before posting its completion follow-up; relevant only when X mode is on.
+- `trello` - load on a `trello-inbox`, `trello-ready`, `trello-nudge`, `trello-hold`, or `trello-mode-error` `check:` wake, and when mirroring task state onto the board or handling pause/start; relevant only when the Trello control plane is on (section 15).
 - `firstmate-codexapp` - load before coordinating a visible Codex Desktop thread, evaluating a Codex App backend request, or reconciling Codex Desktop host-tool smoke evidence for Firstmate work.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared, tracked material, as defined by section 1's list, whether editing directly or briefing a crewmate for a firstmate-repo task.
 
@@ -788,6 +795,25 @@ On an `x-mention <request_id>` or `x-mode-error ...` `check:` wake, load `fmx-re
 It owns mention classification, acting on the request, reply composition, voice, thread-splitting, image attachments, dry-run preview, and the completion-follow-up procedure in full, including what an `x-mode-error` wake means instead.
 `docs/configuration.md` "X mode (.env)" has the wire-protocol reference.
 The one fact that must survive here because it fires on a generic terminal wake, not the mention wake itself: when an X-mode-linked task reaches a terminal state, post its final completion follow-up per section 8's wake-handling step before tearing down.
+
+## 15. Trello control plane
+
+The Trello control plane turns a Trello board into both a visual dashboard of the fleet and a two-way command surface the captain drives.
+It ships inside this repo for every user but is **inert until opted in**, so a user who never enables it sees zero behavior change.
+
+**Activation is config presence, not a command.**
+The plane is off unless this home's gitignored `config/trello.env` supplies all three of `TRELLO_API_KEY`, `TRELLO_TOKEN`, and `TRELLO_BOARD_SHORTLINK` (copy `docs/examples/trello.env`; never commit a real token).
+Bootstrap wires the board poll automatically and purely additively from that presence, exactly like X mode; `docs/trello-control-plane.md` owns the full contract - activation, bootstrap artifacts, lanes, poll mechanics, and pause/hibernate - and `docs/configuration.md` "Trello control plane" has the env-var reference.
+The control plane is a reason to keep the watcher armed even with no fleet work, so a Trello-only user is still served.
+
+**Ownership model (the conflict-avoidance rule that must survive here).**
+The captain owns exactly two moves: creating a card in 📥 Inbox (a new task request) and moving a card to 🟢 Ready / Go, or adding a `go` label, plus a comment (a decision given).
+Firstmate owns every other lane and drives cards through them, and NEVER places a card into Inbox or Ready, so any card there is unambiguously captain-driven.
+On pickup, immediately move the card to 🔨 In Progress and comment "picked up - working".
+
+**Handling.**
+On a `trello-inbox`, `trello-ready`, `trello-nudge`, `trello-hold`, or `trello-mode-error` `check:` wake, load `/trello` (section 13).
+It owns the pickup rule, the per-trigger handler contract, the outbound mirror via `bin/fm-trello.sh`, and pause/start in full.
 
 ## Maintaining this file
 

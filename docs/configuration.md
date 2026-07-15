@@ -310,6 +310,13 @@ In dry-run, `fm-x-dismiss.sh` records `{request_id, endpoint:"dismiss"}` to the 
 The live answer and follow-up bodies intentionally stay the same shape, including optional `image`; the relay distinguishes them by endpoint, and dismiss stays `{request_id}`.
 These paths need `jq` to build the JSON payload, but they run before token and network checks, so they need neither `FMX_PAIRING_TOKEN` nor `curl`.
 
+## Trello control plane
+
+The Trello control plane makes a board both a fleet dashboard and a two-way command surface, opt-in via a non-empty, complete `config/trello.env`.
+`docs/trello-control-plane.md` is the single owner of the full contract - activation, bootstrap artifacts, lanes, the ownership model, poll triggers and idempotency, pause/hibernate, and webhooks-as-a-future-enhancement.
+Like X mode it is purely additive: bootstrap drops `state/trello-watch.check.sh` (a check shim running `bin/fm-trello-poll.sh`) and `config/trello-mode.env` (`FM_CHECK_INTERVAL=30`) when the config is present, and removes them when it is absent or incomplete, without touching any watcher-backbone file.
+`api.trello.com` is an external host, reached only when the config is present; credentials are passed as query params through a `0600` `-K` curl config file so they never appear in argv.
+
 ## Environment variables
 
 Runtime tuning via environment variables (defaults shown):
@@ -357,6 +364,13 @@ FMX_DISCORD_REPLY_MAX_CHARS=1900   # Discord reply per-message split budget; val
 FMX_X_THREAD_MAX=25     # maximum messages in one auto-split reply thread
 FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting X-mode completion follow-ups (7 days)
 FMX_FOLLOWUP_MAX_COUNT=3   # local cap on X-mode completion follow-ups per linked mention
+TRELLO_API_KEY=         # Trello control-plane API key; part of the config/trello.env opt-in gate
+TRELLO_TOKEN=           # Trello user token authorizing the key to read/write the board
+TRELLO_BOARD_SHORTLINK= # the board short link (from its URL); lane list ids are resolved dynamically
+TRELLO_API_BASE=https://api.trello.com   # optional Trello API base override, mainly for a local mock
+FM_TRELLO_ENV_FILE=     # optional alternate config file for direct Trello client calls; bootstrap still checks config/trello.env
+FM_TRELLO_TIMEOUT=10    # seconds allowed per Trello REST call
+FM_TRELLO_NO_ARM=       # when set, fm-trello.sh start skips arming the watcher (used by tests)
 FM_LOCK_STALE_AFTER=2   # seconds before dead-pid lock records can be reclaimed; mid-acquire locks keep at least 2s grace
 FM_GUARD_GRACE=300      # seconds before guard warnings, arm health checks, and the primary turn-end guard treat a watcher beacon as stale
 FM_ARM_CONFIRM_TIMEOUT=10   # seconds fm-watch-arm waits to confirm a fresh watcher before reporting FAILED
