@@ -83,7 +83,7 @@ config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitig
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/x-mode.env    generated X-mode watcher cadence; LOCAL, gitignored; source before arming watcher when present
 config/trello.env    optional Trello control-plane credentials (TRELLO_API_KEY, TRELLO_TOKEN, TRELLO_BOARD_SHORTLINK); LOCAL, gitignored; presence-gates section 15
-config/trello-mode.env  generated Trello control-plane watcher cadence (FM_CHECK_INTERVAL=30); LOCAL, gitignored; source before arming watcher when present
+config/trello-mode.env  generated Trello control-plane watcher cadence (FM_CHECK_INTERVAL=60, once per minute); LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         captain's personal preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
